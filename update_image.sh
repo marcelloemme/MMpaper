@@ -25,11 +25,30 @@ echo "📸 Processing image: $IMAGE_PATH"
 
 # Check if ImageMagick is installed
 if command -v convert &> /dev/null; then
-    echo "🔧 Resizing to 960x540..."
-    convert "$IMAGE_PATH" -resize 960x540\! -quality 90 image/current.jpg
+    echo "🔧 Processing image for 960x540 display (16:9 aspect ratio)..."
+    echo "   - Maintaining aspect ratio (no stretching)"
+    echo "   - Smart crop to center if needed"
+
+    # Get original dimensions
+    ORIG_SIZE=$(identify -format "%wx%h" "$IMAGE_PATH" 2>/dev/null)
+    echo "   - Original size: $ORIG_SIZE"
+
+    # Resize to fill 960x540, maintaining aspect ratio, then crop to exact size
+    # -resize 960x540^ = resize to fill (^ means minimum dimension matches)
+    # -gravity center = crop from center
+    # -extent 960x540 = final exact size
+    convert "$IMAGE_PATH" \
+        -resize 960x540^ \
+        -gravity center \
+        -extent 960x540 \
+        -quality 90 \
+        image/current.jpg
+
+    echo "   ✅ Processed to 960x540 (no distortion)"
 else
     echo "⚠️  ImageMagick not installed, copying without resize"
     echo "   Install with: brew install imagemagick"
+    echo "   Note: Image may not display correctly if wrong size"
     cp "$IMAGE_PATH" image/current.jpg
 fi
 

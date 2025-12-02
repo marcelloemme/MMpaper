@@ -20,9 +20,41 @@ All other files in this folder are ignored (see `.gitignore`).
 ## 🖼️ Display Specs
 
 - **Resolution**: 960 × 540 pixels
-- **Aspect ratio**: 16:9
+- **Aspect ratio**: 16:9 (landscape)
 - **Format**: JPEG (recommended quality: 85-95%)
-- **Color**: Grayscale (16 levels)
+- **Color**: Grayscale (16 levels - color images automatically converted)
+
+## 📐 Image Processing
+
+The `update_image.sh` script automatically handles different image sizes:
+
+### ✅ What it does:
+- **Maintains aspect ratio** (no stretching/distortion)
+- **Smart crop to center** if aspect ratio differs
+- **Scales up or down** as needed
+- **Converts to grayscale** (16 levels)
+
+### 📏 Examples:
+
+| Input Size | Input Aspect | What Happens |
+|------------|--------------|--------------|
+| 1920×1080 | 16:9 | ✅ Perfect! Scales down to 960×540 |
+| 3000×2000 | 3:2 | ✅ Scales + crops sides to fit 16:9 |
+| 2000×3000 | 2:3 (portrait) | ✅ Scales + crops top/bottom to fit 16:9 |
+| 1080×1920 | 9:16 (portrait) | ✅ Scales + crops top/bottom to fit 16:9 |
+| 1200×1200 | 1:1 (square) | ✅ Scales + crops sides to fit 16:9 |
+| 500×300 | Any | ✅ Upscales (may be slightly pixelated) |
+
+### 🎯 Cropping Behavior:
+- **Wider than 16:9** (e.g., 2:1, 21:9): Crops left/right sides
+- **Taller than 16:9** (e.g., 4:3, 1:1, portrait): Crops top/bottom
+- **Center gravity**: Always crops from center, keeping main subject visible
+
+### 💡 Tips:
+- For best results, use images close to 16:9 aspect ratio
+- Portrait photos (2:3, 3:4) will work but lose top/bottom portions
+- Square images will lose ~30% of left/right sides
+- The crop is intelligent: centers the image before cropping
 
 ## 🚀 Quick Update
 
@@ -41,8 +73,13 @@ The script will:
 ### Manual update:
 
 ```bash
-# 1. Resize your image
-convert my_photo.jpg -resize 960x540\! image/current.jpg
+# 1. Process your image (smart crop, no distortion)
+convert my_photo.jpg \
+  -resize 960x540^ \
+  -gravity center \
+  -extent 960x540 \
+  -quality 90 \
+  image/current.jpg
 
 # 2. Update metadata
 echo '{"updated":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","md5":"'$(md5 -q image/current.jpg)'"}' > image/image_meta.json
@@ -52,6 +89,12 @@ git add image/current.jpg image/image_meta.json
 git commit -m "Update display image"
 git push
 ```
+
+**Explanation of convert command:**
+- `-resize 960x540^` = Scale to fill (minimum dimension = 960 or 540)
+- `-gravity center` = Crop from center
+- `-extent 960x540` = Final exact size 960×540
+- `-quality 90` = JPEG quality (85-95 recommended)
 
 ## 📱 Device Behavior
 
