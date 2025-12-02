@@ -1,0 +1,7 @@
+{
+  "type": "MMpaper",
+  "version": "0.1.0",
+  "host": "raw.githubusercontent.com",
+  "port": 443,
+  "bin": "/marcelloemme/MMpaper/main/firmware.bin"
+}

@@ -2,12 +2,12 @@
 #include <M5Unified.h>
 #include <Preferences.h>
 #include <WiFi.h>
-#include <esp_ghota.h>
+#include <esp32fota.h>
 #include "config.h"
 
 // ===== GLOBAL OBJECTS =====
 Preferences prefs;
-esp_ghota ghota;
+esp32FOTA FOTA("MMpaper", FIRMWARE_VERSION, false);
 
 // ===== DISPLAY REFRESH MANAGEMENT =====
 int partialRefreshCount = 0;
@@ -93,30 +93,29 @@ void checkGitHubAndUpdate() {
 
   Serial.println("WiFi connected!");
 
-  // 4. Configura esp_ghota
-  ghota.setRepository(GITHUB_USER, GITHUB_REPO);
+  // 4. Configura esp32FOTA - crea URL del manifest JSON
+  String manifestURL = "https://raw.githubusercontent.com/" + String(GITHUB_USER) +
+                       "/" + String(GITHUB_REPO) + "/main/firmware.json";
+
+  Serial.printf("Checking for updates at: %s\n", manifestURL.c_str());
 
   // 5. Check per update
-  Serial.println("Checking GitHub for new version...");
-  if (ghota.checkForUpdate()) {
+  bool updateAvailable = FOTA.execHTTPcheck();
+
+  if (updateAvailable) {
     Serial.println("New version found! Installing...");
 
     displayMessage("Update found!", 200);
     displayMessage("Installing...", 300);
 
     // 6. Download e installa
-    bool success = ghota.doUpdate();
+    FOTA.execOTA();
 
-    if (success) {
-      displayMessage("Update successful!", 200);
-      displayMessage("Restarting...", 300);
-      delay(2000);
-      ESP.restart();  // Riavvia con nuova versione
-    } else {
-      displayMessage("Update failed!", 200);
-      displayMessage("Starting old version...", 300);
-      delay(2000);
-    }
+    // Se arriviamo qui, OTA è riuscito
+    displayMessage("Update successful!", 200);
+    displayMessage("Restarting...", 300);
+    delay(2000);
+    ESP.restart();  // Riavvia con nuova versione
   } else {
     Serial.println("No update available, version up to date");
   }
