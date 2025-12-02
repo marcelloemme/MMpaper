@@ -31,7 +31,7 @@ struct WiFiNetwork {
 };
 
 const WiFiNetwork WIFI_NETWORKS[WIFI_NETWORKS_COUNT] = {
-  {"HomeNetwork_2.4GHz", "myHomePassword123"},    // Rete 1: Casa
+  {"FASTWEB-RNHDU3", "C9FLCJDDRY"},    // Rete 1: Casa
   {"OfficeWiFi_Guest", "officeGuest456"},         // Rete 2: Ufficio
   {"MobileHotspot_5G", "hotspot789xyz"}           // Rete 3: Hotspot mobile
 };
