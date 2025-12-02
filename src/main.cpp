@@ -3,7 +3,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <SD.h>
+#include <Update.h>
 #include <time.h>
 #include "config.h"
 
@@ -106,17 +106,18 @@ void displayMessage(const char* message, int y = 270) {
   M5.Display.fillScreen(TFT_WHITE);
   M5.Display.drawString(message, 480, y);
   M5.Display.display();  // Full refresh
+  // Non spegniamo display qui perché potrebbero esserci più messaggi in sequenza
 }
 
 /**
- * Download file da URL e salva su SD
+ * Download firmware da URL e installa via OTA sulla flash
  * Returns: true se successo, false se fallito
  */
-bool downloadFileToSD(const char* url, const char* filename) {
+bool downloadAndUpdateOTA(const char* url) {
   HTTPClient http;
   http.begin(url);
 
-  Serial.printf("Downloading: %s\n", url);
+  Serial.printf("Downloading firmware: %s\n", url);
   int httpCode = http.GET();
 
   if (httpCode != HTTP_CODE_OK) {
@@ -125,48 +126,73 @@ bool downloadFileToSD(const char* url, const char* filename) {
     return false;
   }
 
-  // Apri file su SD per scrittura
-  File file = SD.open(filename, FILE_WRITE);
-  if (!file) {
-    Serial.println("Failed to open file on SD for writing");
+  // Ottieni dimensione totale
+  int totalLength = http.getSize();
+  int currentLength = 0;
+
+  // Inizia OTA update
+  if (!Update.begin(totalLength)) {
+    Serial.printf("OTA begin failed! Error: %s\n", Update.errorString());
     http.end();
     return false;
   }
 
-  // Ottieni dimensione totale
-  int totalLength = http.getSize();
-  int currentLength = 0;
+  Serial.println("OTA update started...");
 
   // Buffer per download
   uint8_t buff[512] = { 0 };
   WiFiClient* stream = http.getStreamPtr();
 
-  // Download con progress
+  // Download e scrittura diretta su flash OTA partition
   while (http.connected() && (currentLength < totalLength || totalLength == -1)) {
     size_t availableSize = stream->available();
 
     if (availableSize) {
       int bytesRead = stream->readBytes(buff, min(availableSize, sizeof(buff)));
-      file.write(buff, bytesRead);
+
+      // Scrivi su OTA partition
+      if (Update.write(buff, bytesRead) != bytesRead) {
+        Serial.println("OTA write failed!");
+        Update.abort();
+        http.end();
+        return false;
+      }
+
       currentLength += bytesRead;
 
       // Progress ogni 100KB
       if (currentLength % 102400 == 0) {
-        Serial.printf("Downloaded: %d KB / %d KB\n", currentLength / 1024, totalLength / 1024);
+        Serial.printf("OTA Progress: %d KB / %d KB (%d%%)\n",
+                      currentLength / 1024,
+                      totalLength / 1024,
+                      (currentLength * 100) / totalLength);
       }
     }
     delay(1);
   }
 
-  file.close();
   http.end();
 
-  Serial.printf("Download complete! %d bytes written\n", currentLength);
-  return true;
+  // Finalizza OTA update
+  if (Update.end(true)) {
+    Serial.printf("OTA update complete! %d bytes written\n", currentLength);
+
+    // Verifica MD5 (se disponibile)
+    if (Update.isFinished()) {
+      Serial.println("Update successfully completed. Rebooting...");
+      return true;
+    } else {
+      Serial.println("Update not finished! Something went wrong!");
+      return false;
+    }
+  } else {
+    Serial.printf("OTA error: %s\n", Update.errorString());
+    return false;
+  }
 }
 
 /**
- * Check GitHub e aggiorna .bin su microSD se disponibile
+ * Check GitHub e aggiorna firmware via OTA
  */
 void checkGitHubAndUpdate() {
   Serial.println("=== AUTO-UPDATE CHECK ===");
@@ -177,17 +203,10 @@ void checkGitHubAndUpdate() {
     return;
   }
 
-  // 2. Inizializza SD card
-  if (!SD.begin()) {
-    Serial.println("SD card not found, skipping update");
-    return;
-  }
-  Serial.println("SD card initialized");
-
-  // 3. Mostra messaggio su display
+  // 2. Mostra messaggio su display
   displayMessage("Checking for updates...");
 
-  // 4. Connetti WiFi
+  // 3. Connetti WiFi
   Serial.println("Connecting to WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -211,7 +230,7 @@ void checkGitHubAndUpdate() {
 
   Serial.println("WiFi connected!");
 
-  // 4b. Sincronizza ora NTP (solo al primo avvio)
+  // 4. Sincronizza ora NTP (solo al primo avvio)
   if (isFirstBoot) {
     syncTimeFromNTP();
   }
@@ -253,54 +272,36 @@ void checkGitHubAndUpdate() {
     return;
   }
 
-  Serial.println("New version found! Downloading to SD...");
+  Serial.println("New version found! Downloading via OTA...");
   displayMessage("Update found!", 200);
   displayMessage("Downloading...", 300);
 
-  // 8. Download nuovo MMpaper.bin su SD
+  // 8. Download e installa nuovo firmware via OTA
   String binURL = "https://raw.githubusercontent.com/" + String(GITHUB_USER) +
                   "/" + String(GITHUB_REPO) + "/main/MMpaper.bin";
 
-  // Scarica in file temporaneo prima
-  const char* tempFile = "/MMpaper_new.bin";
-  const char* finalFile = "/MMpaper.bin";
+  bool updateSuccess = downloadAndUpdateOTA(binURL.c_str());
 
-  bool downloadSuccess = downloadFileToSD(binURL.c_str(), tempFile);
-
-  if (!downloadSuccess) {
-    Serial.println("Download failed!");
-    displayMessage("Download failed!", 200);
-    displayMessage("Starting old version...", 300);
+  if (!updateSuccess) {
+    Serial.println("OTA update failed!");
+    displayMessage("Update failed!", 200);
+    displayMessage("Continuing with current version...", 300);
     delay(2000);
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
     return;
   }
 
-  // 9. Sostituisci vecchio file con nuovo
-  displayMessage("Installing...", 270);
-
-  // Rimuovi vecchio file
-  if (SD.exists(finalFile)) {
-    SD.remove(finalFile);
-    Serial.println("Old firmware.bin removed");
-  }
-
-  // Rinomina nuovo file
-  SD.rename(tempFile, finalFile);
-  Serial.println("New firmware.bin installed on SD!");
-
-  // 10. Successo! Riavvia per far caricare da Launcher
+  // 9. Successo! Riavvia con nuova versione
   displayMessage("Update successful!", 200);
   displayMessage("Restarting...", 300);
-  displayMessage("Launcher will load new version", 400);
   delay(3000);
 
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 
-  Serial.println("Rebooting to Launcher...");
-  ESP.restart();  // Launcher ricaricherà MMpaper.bin aggiornato dalla SD!
+  Serial.println("Rebooting with new firmware...");
+  ESP.restart();  // Boot con nuova versione dalla flash!
 }
 
 // ===== DISPLAY REFRESH FUNCTIONS =====
@@ -320,12 +321,14 @@ void smartRefresh() {
     // Full refresh
     Serial.println("Full refresh (ghosting fix)");
     M5.Display.display();  // Full refresh (default)
+    M5.Display.sleep();     // Spegni display dopo refresh
     lastFullRefresh = now;
     partialRefreshCount = 0;
   } else {
     // Partial refresh
     Serial.println("Partial refresh");
     // M5.Display.displayPartial();  // Da implementare con EPDIY
+    M5.Display.sleep();     // Spegni display dopo refresh
     partialRefreshCount++;
   }
 
@@ -360,6 +363,7 @@ void initializeApp() {
   M5.Display.drawString("Auto-updating e-ink app", 480, 500);
 
   M5.Display.display();  // Full refresh
+  M5.Display.sleep();     // Spegni display dopo splash screen
 
   Serial.println("MMpaper initialized!");
 }
