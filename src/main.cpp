@@ -200,9 +200,9 @@ void checkGitHubAndUpdate() {
   displayMessage("Update found!", 200);
   displayMessage("Downloading...", 300);
 
-  // 8. Download nuovo firmware.bin su SD
+  // 8. Download nuovo MMpaper.bin su SD
   String binURL = "https://raw.githubusercontent.com/" + String(GITHUB_USER) +
-                  "/" + String(GITHUB_REPO) + "/main/firmware.bin";
+                  "/" + String(GITHUB_REPO) + "/main/MMpaper.bin";
 
   // Scarica in file temporaneo prima
   const char* tempFile = "/MMpaper_new.bin";

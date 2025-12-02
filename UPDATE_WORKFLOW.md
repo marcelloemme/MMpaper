@@ -102,8 +102,8 @@ vim firmware.json     # Change version
 # 4. Compile
 pio run
 
-# 5. Update files
-cp .pio/build/PaperS3/firmware.bin ./firmware.bin
+# 5. Copy and rename binary
+cp .pio/build/PaperS3/firmware.bin ./MMpaper.bin
 
 # 6. Commit & push
 git add -A

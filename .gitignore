@@ -3,3 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Ignore generic firmware.bin (PlatformIO output)
+# Keep MMpaper.bin (our release binary)
+firmware.bin
