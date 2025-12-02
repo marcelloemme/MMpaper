@@ -2,7 +2,7 @@
 #define CONFIG_H
 
 // ===== FIRMWARE VERSION =====
-#define FIRMWARE_VERSION "0.6.0"
+#define FIRMWARE_VERSION "0.6.1"
 #define GITHUB_USER "marcelloemme"
 #define GITHUB_REPO "MMpaper"
 

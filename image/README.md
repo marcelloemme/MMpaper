@@ -19,8 +19,9 @@ All other files in this folder are ignored (see `.gitignore`).
 
 ## 🖼️ Display Specs
 
-- **Resolution**: 960 × 540 pixels
-- **Aspect ratio**: 16:9 (landscape)
+- **Resolution**: 540 × 960 pixels (PORTRAIT mode)
+- **Aspect ratio**: 9:16 (portrait - vertical orientation)
+- **Orientation**: Bottom side has the wider bezel with mounting holes
 - **Format**: JPEG (recommended quality: 85-95%)
 - **Color**: Grayscale (16 levels - color images automatically converted)
 
@@ -38,22 +39,22 @@ The `update_image.sh` script automatically handles different image sizes:
 
 | Input Size | Input Aspect | What Happens |
 |------------|--------------|--------------|
-| 1920×1080 | 16:9 | ✅ Perfect! Scales down to 960×540 |
-| 3000×2000 | 3:2 | ✅ Scales + crops sides to fit 16:9 |
-| 2000×3000 | 2:3 (portrait) | ✅ Scales + crops top/bottom to fit 16:9 |
-| 1080×1920 | 9:16 (portrait) | ✅ Scales + crops top/bottom to fit 16:9 |
-| 1200×1200 | 1:1 (square) | ✅ Scales + crops sides to fit 16:9 |
-| 500×300 | Any | ✅ Upscales (may be slightly pixelated) |
+| 1080×1920 | 9:16 (portrait) | ✅ Perfect! Scales to 540×960 |
+| 2000×3000 | 2:3 (portrait) | ✅ Scales + crops top/bottom to fit 9:16 |
+| 3000×4000 | 3:4 (portrait) | ✅ Scales + crops top/bottom to fit 9:16 |
+| 1920×1080 | 16:9 (landscape) | ✅ Scales + crops sides to fit 9:16 |
+| 1200×1200 | 1:1 (square) | ✅ Scales + crops top/bottom to fit 9:16 |
+| 500×800 | Any portrait | ✅ Upscales (may be slightly pixelated) |
 
-### 🎯 Cropping Behavior:
-- **Wider than 16:9** (e.g., 2:1, 21:9): Crops left/right sides
-- **Taller than 16:9** (e.g., 4:3, 1:1, portrait): Crops top/bottom
+### 🎯 Cropping Behavior (PORTRAIT MODE):
+- **Taller than 9:16** (e.g., 2:3, 3:4): Crops top/bottom
+- **Wider than 9:16** (e.g., 16:9 landscape, 1:1 square): Crops left/right sides
 - **Center gravity**: Always crops from center, keeping main subject visible
 
 ### 💡 Tips:
-- For best results, use images close to 16:9 aspect ratio
-- Portrait photos (2:3, 3:4) will work but lose top/bottom portions
-- Square images will lose ~30% of left/right sides
+- For best results, use **portrait photos** close to 9:16 aspect ratio (540×960, 1080×1920, etc.)
+- Landscape photos (16:9) will be cropped heavily on the sides
+- Square images will lose top/bottom portions
 - The crop is intelligent: centers the image before cropping
 
 ## 🚀 Quick Update

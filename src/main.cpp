@@ -345,25 +345,29 @@ void displayImageFullscreen() {
 
   Serial.printf("Image dimensions: %dx%d\n", jpgWidth, jpgHeight);
 
+  // PORTRAIT MODE: 540×960 (9:16 aspect ratio)
+  const int SCREEN_WIDTH = 540;
+  const int SCREEN_HEIGHT = 960;
+
   // Calcola aspect ratio
   float imgRatio = (float)jpgWidth / (float)jpgHeight;
-  float screenRatio = 960.0f / 540.0f;  // 16:9 = 1.778
+  float screenRatio = (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT;  // 9:16 = 0.5625
 
   int drawX = 0, drawY = 0;
-  int drawWidth = 960, drawHeight = 540;
+  int drawWidth = SCREEN_WIDTH, drawHeight = SCREEN_HEIGHT;
 
   // Smart crop: scala per riempire, poi offset per centrare
   if (imgRatio > screenRatio) {
     // Immagine più larga: scala in base all'altezza, croppa i lati
-    drawHeight = 540;
-    drawWidth = (int)((float)jpgWidth * 540.0f / (float)jpgHeight);
-    drawX = -(drawWidth - 960) / 2;  // Centra orizzontalmente
+    drawHeight = SCREEN_HEIGHT;
+    drawWidth = (int)((float)jpgWidth * (float)SCREEN_HEIGHT / (float)jpgHeight);
+    drawX = -(drawWidth - SCREEN_WIDTH) / 2;  // Centra orizzontalmente
     Serial.printf("Wide image: crop sides (draw at x=%d, width=%d)\n", drawX, drawWidth);
   } else {
     // Immagine più alta: scala in base alla larghezza, croppa top/bottom
-    drawWidth = 960;
-    drawHeight = (int)((float)jpgHeight * 960.0f / (float)jpgWidth);
-    drawY = -(drawHeight - 540) / 2;  // Centra verticalmente
+    drawWidth = SCREEN_WIDTH;
+    drawHeight = (int)((float)jpgHeight * (float)SCREEN_WIDTH / (float)jpgWidth);
+    drawY = -(drawHeight - SCREEN_HEIGHT) / 2;  // Centra verticalmente
     Serial.printf("Tall image: crop top/bottom (draw at y=%d, height=%d)\n", drawY, drawHeight);
   }
 
@@ -751,7 +755,10 @@ void setup() {
   cfg.internal_imu = ENABLE_IMU;  // Disabilita IMU
   M5.begin(cfg);
 
-  Serial.println("M5Unified initialized");
+  // Imposta orientamento VERTICALE (portrait) con bordo largo in basso
+  M5.Display.setRotation(1);  // 90° rotation: 540×960 portrait
+
+  Serial.println("M5Unified initialized (portrait mode)");
 
   // 1. FIRMWARE UPDATE CHECK (solo al boot)
   if (shouldCheckFirmwareUpdate()) {

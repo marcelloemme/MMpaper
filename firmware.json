@@ -1,6 +1,6 @@
 {
   "type": "MMpaper",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "host": "raw.githubusercontent.com",
   "port": 443,
   "bin": "/marcelloemme/MMpaper/main/MMpaper.bin"
