@@ -20,6 +20,70 @@ int partialRefreshCount = 0;
 unsigned long lastFullRefresh = 0;
 bool displayDirty = false;
 
+// ===== WIFI CONNECTION =====
+
+/**
+ * Connette al WiFi provando tutte le reti disponibili
+ * - Prova tutte le reti in sequenza
+ * - Ripete fino a WIFI_MAX_ATTEMPTS volte
+ * - Pausa di WIFI_RETRY_DELAY tra un loop e l'altro
+ * Returns: true se connesso, false se tutti i tentativi falliscono
+ */
+bool connectToWiFi() {
+  Serial.println("=== CONNECTING TO WIFI ===");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+
+  // Loop per numero massimo di tentativi
+  for (int attempt = 1; attempt <= WIFI_MAX_ATTEMPTS; attempt++) {
+    Serial.printf("Attempt %d/%d\n", attempt, WIFI_MAX_ATTEMPTS);
+
+    // Prova tutte le reti disponibili
+    for (int i = 0; i < WIFI_NETWORKS_COUNT; i++) {
+      const char* ssid = WIFI_NETWORKS[i].ssid;
+      const char* password = WIFI_NETWORKS[i].password;
+
+      Serial.printf("Trying network %d/%d: %s\n", i + 1, WIFI_NETWORKS_COUNT, ssid);
+
+      WiFi.begin(ssid, password);
+
+      // Aspetta connessione (timeout per singola rete)
+      unsigned long startAttempt = millis();
+      while (WiFi.status() != WL_CONNECTED &&
+             millis() - startAttempt < WIFI_CONNECT_TIMEOUT_PER_NET) {
+        delay(100);
+        Serial.print(".");
+      }
+      Serial.println();
+
+      // Connessione riuscita?
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("✅ Connected to: %s\n", ssid);
+        Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
+        Serial.printf("Signal strength: %d dBm\n", WiFi.RSSI());
+        return true;
+      }
+
+      Serial.printf("❌ Failed to connect to: %s\n", ssid);
+      WiFi.disconnect();
+      delay(500);  // Breve pausa tra una rete e l'altra
+    }
+
+    // Se non è l'ultimo tentativo, aspetta prima di riprovare
+    if (attempt < WIFI_MAX_ATTEMPTS) {
+      Serial.printf("Waiting %d seconds before retry...\n", WIFI_RETRY_DELAY / 1000);
+      delay(WIFI_RETRY_DELAY);
+    }
+  }
+
+  // Tutti i tentativi falliti
+  Serial.println("❌ Failed to connect to any WiFi network");
+  WiFi.mode(WIFI_OFF);
+  return false;
+}
+
 // ===== AUTO-UPDATE FUNCTIONS =====
 
 /**
@@ -258,25 +322,11 @@ void checkAndUpdateImage() {
     return;
   }
 
-  // 2. Connetti WiFi
-  Serial.println("Connecting to WiFi for image check...");
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  unsigned long startAttempt = millis();
-  while (WiFi.status() != WL_CONNECTED &&
-         millis() - startAttempt < WIFI_CONNECT_TIMEOUT) {
-    delay(100);
-  }
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi connection failed, skipping image check");
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
+  // 2. Connetti WiFi (prova tutte le reti disponibili)
+  if (!connectToWiFi()) {
+    Serial.println("Failed to connect to WiFi, skipping image check");
     return;
   }
-
-  Serial.println("WiFi connected!");
 
   // 3. Scarica metadata
   String remoteMD5 = downloadImageMetadata();
@@ -429,29 +479,13 @@ void checkGitHubAndUpdate() {
   // 2. Mostra messaggio su display
   displayMessage("Checking for updates...");
 
-  // 3. Connetti WiFi
-  Serial.println("Connecting to WiFi...");
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  unsigned long startAttempt = millis();
-  while (WiFi.status() != WL_CONNECTED &&
-         millis() - startAttempt < WIFI_CONNECT_TIMEOUT) {
-    delay(100);
-    Serial.print(".");
-  }
-  Serial.println();
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi connection failed, skipping update");
-    displayMessage("No WiFi - Starting app");
+  // 3. Connetti WiFi (prova tutte le reti disponibili)
+  if (!connectToWiFi()) {
+    Serial.println("Failed to connect to WiFi, skipping firmware update");
+    displayMessage("No WiFi - Continuing");
     delay(1000);
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
     return;
   }
-
-  Serial.println("WiFi connected!");
 
   // 4. Sincronizza ora NTP (solo al primo avvio)
   if (isFirstBoot) {
@@ -668,20 +702,11 @@ void setup() {
     isFirstBoot = false;
   }
 
-  // 3. Se non abbiamo immagine, mostra l'immagine attuale salvata
+  // 3. Se non abbiamo immagine, prova a scaricare l'immagine corrente
   if (imageBuffer == nullptr) {
-    Serial.println("No new image downloaded, attempting to show cached image");
-    // Prova a scaricare l'immagine corrente
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.println("No new image downloaded, attempting to download current image");
 
-    unsigned long startAttempt = millis();
-    while (WiFi.status() != WL_CONNECTED &&
-           millis() - startAttempt < WIFI_CONNECT_TIMEOUT) {
-      delay(100);
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
+    if (connectToWiFi()) {
       downloadImage();
       WiFi.disconnect(true);
       WiFi.mode(WIFI_OFF);
@@ -689,6 +714,8 @@ void setup() {
       if (imageBuffer != nullptr) {
         displayImageFullscreen();
       }
+    } else {
+      Serial.println("No WiFi available, skipping image display");
     }
   }
 
