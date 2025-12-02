@@ -6,6 +6,7 @@
 #include <Update.h>
 #include <time.h>
 #include "config.h"
+#include "lgfx/utility/lgfx_tjpgd.h"  // For JPEG dimension parsing
 
 // ===== GLOBAL OBJECTS =====
 Preferences prefs;
@@ -290,6 +291,7 @@ bool downloadImage() {
 
 /**
  * Mostra immagine JPEG a schermo intero
+ * Smart crop: mantiene aspect ratio, riempie schermo, croppa dal centro
  */
 void displayImageFullscreen() {
   if (imageBuffer == nullptr || imageBufferSize == 0) {
@@ -301,13 +303,77 @@ void displayImageFullscreen() {
 
   M5.Display.wakeup();  // Sveglia display se in sleep
   M5.Display.setColorDepth(8);  // 8-bit grayscale
+  M5.Display.fillScreen(TFT_BLACK);
 
-  // Mostra immagine JPEG da buffer
-  M5.Display.drawJpg(imageBuffer, imageBufferSize, 0, 0, 960, 540);
+  // Get JPEG dimensions using TJpgDec parser
+  lgfxJdec jdec;
+  uint8_t workbuf[3100];  // Working buffer for TJpgDec
+
+  // JPEG data source for parser
+  struct JpgDataSource {
+    const uint8_t* buffer;
+    size_t size;
+    size_t pos;
+  };
+
+  // Data read callback
+  auto jpgRead = [](void* data, uint8_t* buf, uint32_t len) -> uint32_t {
+    JpgDataSource* src = (JpgDataSource*)data;
+    if (src->pos >= src->size) return 0;
+    uint32_t remain = src->size - src->pos;
+    if (len > remain) len = remain;
+    memcpy(buf, src->buffer + src->pos, len);
+    src->pos += len;
+    return len;
+  };
+
+  JpgDataSource jpgData = { imageBuffer, imageBufferSize, 0 };
+
+  // Parse JPEG header to get dimensions
+  JRESULT res = lgfx_jd_prepare(&jdec, jpgRead, &jpgData, 3100, workbuf);
+
+  if (res != JDR_OK) {
+    Serial.printf("Failed to parse JPEG: %d\n", res);
+    M5.Display.drawString("Invalid JPEG", 480, 270);
+    M5.Display.display();
+    M5.Display.sleep();
+    return;
+  }
+
+  int jpgWidth = jdec.width;
+  int jpgHeight = jdec.height;
+
+  Serial.printf("Image dimensions: %dx%d\n", jpgWidth, jpgHeight);
+
+  // Calcola aspect ratio
+  float imgRatio = (float)jpgWidth / (float)jpgHeight;
+  float screenRatio = 960.0f / 540.0f;  // 16:9 = 1.778
+
+  int drawX = 0, drawY = 0;
+  int drawWidth = 960, drawHeight = 540;
+
+  // Smart crop: scala per riempire, poi offset per centrare
+  if (imgRatio > screenRatio) {
+    // Immagine più larga: scala in base all'altezza, croppa i lati
+    drawHeight = 540;
+    drawWidth = (int)((float)jpgWidth * 540.0f / (float)jpgHeight);
+    drawX = -(drawWidth - 960) / 2;  // Centra orizzontalmente
+    Serial.printf("Wide image: crop sides (draw at x=%d, width=%d)\n", drawX, drawWidth);
+  } else {
+    // Immagine più alta: scala in base alla larghezza, croppa top/bottom
+    drawWidth = 960;
+    drawHeight = (int)((float)jpgHeight * 960.0f / (float)jpgWidth);
+    drawY = -(drawHeight - 540) / 2;  // Centra verticalmente
+    Serial.printf("Tall image: crop top/bottom (draw at y=%d, height=%d)\n", drawY, drawHeight);
+  }
+
+  // Disegna con dimensioni calcolate (overflow viene clippato automaticamente)
+  M5.Display.drawJpg(imageBuffer, imageBufferSize, drawX, drawY, drawWidth, drawHeight);
+
   M5.Display.display();  // Full refresh
   M5.Display.sleep();    // Spegni display
 
-  Serial.println("Image displayed successfully!");
+  Serial.println("Image displayed with smart crop!");
 }
 
 /**
