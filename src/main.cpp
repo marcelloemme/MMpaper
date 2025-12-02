@@ -4,10 +4,12 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <SD.h>
+#include <time.h>
 #include "config.h"
 
 // ===== GLOBAL OBJECTS =====
 Preferences prefs;
+bool isFirstBoot = true;  // Flag per controllo update al primo avvio
 
 // ===== DISPLAY REFRESH MANAGEMENT =====
 int partialRefreshCount = 0;
@@ -18,22 +20,49 @@ bool displayDirty = false;
 
 /**
  * Controlla se è il momento di verificare aggiornamenti
- * Basato su: timing (24h) + ultima verifica salvata
+ * Trigger:
+ * 1. Al primo avvio (sempre)
+ * 2. Ogni giorno alle 2:00 AM (se non già fatto oggi)
  */
 bool shouldCheckUpdate() {
-  prefs.begin("mmconfig", false);
-  unsigned long lastCheck = prefs.getULong("lastUpdateCheck", 0);
-  unsigned long now = millis();
-
-  // Se sono passate più di 24h dall'ultimo check
-  bool shouldCheck = (now - lastCheck > UPDATE_CHECK_INTERVAL);
-
-  if (shouldCheck) {
-    prefs.putULong("lastUpdateCheck", now);
+  // 1. Primo avvio: controlla sempre
+  if (isFirstBoot) {
+    Serial.println("First boot - checking for updates");
+    return true;
   }
 
+  // 2. Controlla se è l'orario schedulato (2:00 AM)
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to get time, skipping scheduled update check");
+    return false;
+  }
+
+  // Leggi ultimo giorno di controllo
+  prefs.begin("mmconfig", false);
+  int lastCheckDay = prefs.getInt("lastUpdateDay", -1);
+  int currentDay = timeinfo.tm_mday;  // Giorno del mese (1-31)
   prefs.end();
-  return shouldCheck;
+
+  // Se è un nuovo giorno E siamo nell'orario giusto
+  bool isNewDay = (currentDay != lastCheckDay);
+  bool isScheduledTime = (timeinfo.tm_hour == UPDATE_CHECK_HOUR &&
+                          timeinfo.tm_min >= UPDATE_CHECK_MINUTE &&
+                          timeinfo.tm_min < UPDATE_CHECK_MINUTE + 5);  // Finestra di 5 minuti
+
+  if (isNewDay && isScheduledTime) {
+    Serial.printf("Scheduled update time reached (%02d:%02d)\n",
+                  timeinfo.tm_hour, timeinfo.tm_min);
+
+    // Salva giorno corrente
+    prefs.begin("mmconfig", false);
+    prefs.putInt("lastUpdateDay", currentDay);
+    prefs.end();
+
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -42,6 +71,29 @@ bool shouldCheckUpdate() {
 bool isBatteryOkForUpdate() {
   int batteryLevel = M5.Power.getBatteryLevel();
   return (batteryLevel >= MIN_BATTERY_PERCENT);
+}
+
+/**
+ * Sincronizza ora via NTP (richiede WiFi connesso)
+ */
+void syncTimeFromNTP() {
+  Serial.println("Syncing time from NTP...");
+  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+
+  // Aspetta max 10s per sync
+  int timeout = 10;
+  while (timeout > 0) {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      Serial.printf("Time synced: %04d-%02d-%02d %02d:%02d:%02d\n",
+                    timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                    timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+      return;
+    }
+    delay(1000);
+    timeout--;
+  }
+  Serial.println("NTP sync timeout");
 }
 
 /**
@@ -158,6 +210,11 @@ void checkGitHubAndUpdate() {
   }
 
   Serial.println("WiFi connected!");
+
+  // 4b. Sincronizza ora NTP (solo al primo avvio)
+  if (isFirstBoot) {
+    syncTimeFromNTP();
+  }
 
   // 5. Download firmware.json da GitHub
   HTTPClient http;
@@ -332,10 +389,11 @@ void setup() {
 
   // AUTO-UPDATE: check prima di tutto!
   if (shouldCheckUpdate()) {
-    Serial.println("Update check interval reached, checking for updates...");
+    Serial.println("Update check triggered, checking for updates...");
     checkGitHubAndUpdate();
+    isFirstBoot = false;  // Reset flag dopo primo check
   } else {
-    Serial.println("Skipping update check (too soon)");
+    Serial.println("Skipping update check (not scheduled time)");
   }
 
   // Inizializza app principale
@@ -344,6 +402,16 @@ void setup() {
 
 void loop() {
   M5.update();  // Update button state
+
+  // Controlla periodicamente se è l'ora di aggiornare (ogni minuto)
+  static unsigned long lastUpdateCheck = 0;
+  if (millis() - lastUpdateCheck > 60000) {  // Ogni 60 secondi
+    lastUpdateCheck = millis();
+    if (shouldCheckUpdate()) {
+      Serial.println("Scheduled update time reached");
+      checkGitHubAndUpdate();
+    }
+  }
 
   // Run app logic
   runApp();

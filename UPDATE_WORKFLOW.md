@@ -117,23 +117,34 @@ git push
 
 ```
 Day 1, 00:00:
-  MMpaper v0.1.0 running from SD
+  Device boot → MMpaper starts
+  → Check for updates (first boot - always)
+  → Sync time via NTP
+  → Check GitHub: firmware.json
+  → If update available: download and install
+  → Start app
 
-Day 1, 24:00:
-  Check GitHub: firmware.json
+Day 1, 02:00 AM:
+  Scheduled update check
+  → Check GitHub: firmware.json
   → Remote version: 0.2.0
   → Local version: 0.1.0
   → UPDATE NEEDED!
 
   Steps:
   1. WiFi connect
-  2. Download firmware.bin → /MMpaper_new.bin (temp)
+  2. Download MMpaper.bin → /MMpaper_new.bin (temp)
   3. Delete /MMpaper.bin (old)
   4. Rename /MMpaper_new.bin → /MMpaper.bin
   5. Restart
 
   Launcher loads:
   → /MMpaper.bin (now v0.2.0) ✅
+
+Day 2, 02:00 AM:
+  Scheduled update check again
+  → Already up to date (v0.2.0)
+  → Continue running
 ```
 
 ## 🛠️ Manual Operations
@@ -188,6 +199,12 @@ cp firmware.bin /Volumes/SD/MMpaper_test.bin
 - Auto-update needs WiFi connection
 - Configure SSID/password in `include/config.h`
 - Update skipped if no WiFi (safe fallback)
+
+### Update Schedule
+- **At boot**: Always checks for updates on first boot
+- **Scheduled**: Every day at 2:00 AM (configurable in `config.h`)
+- Uses NTP to sync time from internet (requires WiFi)
+- Timezone: GMT+1 (Italy) with daylight saving support
 
 ### Battery Management
 - Auto-update skipped if battery < 30%
