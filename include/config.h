@@ -3,7 +3,7 @@
 
 // ===== FIRMWARE VERSION =====
 #define FIRMWARE_VERSION "0.1.0"
-#define GITHUB_USER "your_github_username"  // CAMBIARE con tuo username
+#define GITHUB_USER "marcelloemme"
 #define GITHUB_REPO "MMpaper"
 
 // ===== AUTO-UPDATE SETTINGS =====
