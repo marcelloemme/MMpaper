@@ -11,6 +11,10 @@
 Preferences prefs;
 bool isFirstBoot = true;  // Flag per controllo update al primo avvio
 
+// ===== IMAGE MANAGEMENT =====
+uint8_t* imageBuffer = nullptr;  // Buffer per immagine JPEG
+size_t imageBufferSize = 0;
+
 // ===== DISPLAY REFRESH MANAGEMENT =====
 int partialRefreshCount = 0;
 unsigned long lastFullRefresh = 0;
@@ -19,47 +23,65 @@ bool displayDirty = false;
 // ===== AUTO-UPDATE FUNCTIONS =====
 
 /**
- * Controlla se è il momento di verificare aggiornamenti
- * Trigger:
- * 1. Al primo avvio (sempre)
- * 2. Ogni giorno alle 2:00 AM (se non già fatto oggi)
+ * Controlla se è il momento di verificare aggiornamenti firmware
+ * Trigger: SOLO al primo avvio (non più schedulato)
  */
-bool shouldCheckUpdate() {
-  // 1. Primo avvio: controlla sempre
+bool shouldCheckFirmwareUpdate() {
   if (isFirstBoot) {
-    Serial.println("First boot - checking for updates");
+    Serial.println("First boot - checking for firmware update");
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Controlla se è il momento di verificare aggiornamenti immagine
+ * Trigger: 6:00, 9:00, 12:00, 15:00, 18:00, 21:00, 00:00
+ */
+bool shouldCheckImageUpdate() {
+  // Al primo avvio: sempre
+  if (isFirstBoot) {
+    Serial.println("First boot - checking for image");
     return true;
   }
 
-  // 2. Controlla se è l'orario schedulato (2:00 AM)
+  // Ottieni ora corrente
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
-    Serial.println("Failed to get time, skipping scheduled update check");
+    Serial.println("Failed to get time, skipping image check");
     return false;
   }
 
-  // Leggi ultimo giorno di controllo
-  prefs.begin("mmconfig", false);
-  int lastCheckDay = prefs.getInt("lastUpdateDay", -1);
-  int currentDay = timeinfo.tm_mday;  // Giorno del mese (1-31)
-  prefs.end();
+  int currentHour = timeinfo.tm_hour;
+  int currentMin = timeinfo.tm_min;
 
-  // Se è un nuovo giorno E siamo nell'orario giusto
-  bool isNewDay = (currentDay != lastCheckDay);
-  bool isScheduledTime = (timeinfo.tm_hour == UPDATE_CHECK_HOUR &&
-                          timeinfo.tm_min >= UPDATE_CHECK_MINUTE &&
-                          timeinfo.tm_min < UPDATE_CHECK_MINUTE + 5);  // Finestra di 5 minuti
+  // Orari di check
+  const int checkHours[] = IMAGE_CHECK_HOURS;
+  const int numCheckHours = sizeof(checkHours) / sizeof(checkHours[0]);
 
-  if (isNewDay && isScheduledTime) {
-    Serial.printf("Scheduled update time reached (%02d:%02d)\n",
-                  timeinfo.tm_hour, timeinfo.tm_min);
+  // Verifica se siamo in un orario di check (finestra di 5 minuti)
+  for (int i = 0; i < numCheckHours; i++) {
+    if (currentHour == checkHours[i] && currentMin < 5) {
+      // Verifica se non abbiamo già fatto check in questa ora
+      prefs.begin("mmconfig", false);
+      int lastCheckHour = prefs.getInt("lastImageCheckHour", -1);
+      int lastCheckDay = prefs.getInt("lastImageCheckDay", -1);
+      int currentDay = timeinfo.tm_mday;
+      prefs.end();
 
-    // Salva giorno corrente
-    prefs.begin("mmconfig", false);
-    prefs.putInt("lastUpdateDay", currentDay);
-    prefs.end();
+      // Check necessario se: nuovo giorno O nuova ora
+      if (currentDay != lastCheckDay || currentHour != lastCheckHour) {
+        Serial.printf("Image check time reached: %02d:00\n", currentHour);
 
-    return true;
+        // Salva orario check
+        prefs.begin("mmconfig", false);
+        prefs.putInt("lastImageCheckHour", currentHour);
+        prefs.putInt("lastImageCheckDay", currentDay);
+        prefs.end();
+
+        return true;
+      }
+    }
   }
 
   return false;
@@ -108,6 +130,207 @@ void displayMessage(const char* message, int y = 270) {
   M5.Display.display();  // Full refresh
   // Non spegniamo display qui perché potrebbero esserci più messaggi in sequenza
 }
+
+// ===== IMAGE FUNCTIONS =====
+
+/**
+ * Scarica metadata immagine da GitHub
+ * Returns: MD5 hash dell'immagine remota, o stringa vuota se errore
+ */
+String downloadImageMetadata() {
+  HTTPClient http;
+  String metadataURL = "https://raw.githubusercontent.com/" + String(GITHUB_USER) +
+                       "/" + String(GITHUB_REPO) + "/main/image/image_meta.json";
+
+  Serial.printf("Downloading metadata: %s\n", metadataURL.c_str());
+  http.begin(metadataURL);
+  int httpCode = http.GET();
+
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("Metadata download failed: %d\n", httpCode);
+    http.end();
+    return "";
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // Parse JSON per ottenere MD5
+  int md5Start = payload.indexOf("\"md5\":") + 7;
+  int md5End = payload.indexOf("\"", md5Start);
+  String md5 = payload.substring(md5Start, md5End);
+
+  Serial.printf("Remote image MD5: %s\n", md5.c_str());
+  return md5;
+}
+
+/**
+ * Scarica immagine da GitHub e la salva nel buffer
+ * Returns: true se successo, false se fallito
+ */
+bool downloadImage() {
+  HTTPClient http;
+  String imageURL = "https://raw.githubusercontent.com/" + String(GITHUB_USER) +
+                    "/" + String(GITHUB_REPO) + "/main/image/current.jpg";
+
+  Serial.printf("Downloading image: %s\n", imageURL.c_str());
+  http.begin(imageURL);
+  int httpCode = http.GET();
+
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("Image download failed: %d\n", httpCode);
+    http.end();
+    return false;
+  }
+
+  int imageSize = http.getSize();
+  Serial.printf("Image size: %d bytes\n", imageSize);
+
+  // Alloca buffer per immagine
+  if (imageBuffer != nullptr) {
+    free(imageBuffer);
+  }
+  imageBuffer = (uint8_t*)malloc(imageSize);
+
+  if (imageBuffer == nullptr) {
+    Serial.println("Failed to allocate image buffer!");
+    http.end();
+    return false;
+  }
+
+  // Scarica immagine
+  WiFiClient* stream = http.getStreamPtr();
+  int bytesRead = 0;
+
+  while (http.connected() && bytesRead < imageSize) {
+    size_t available = stream->available();
+    if (available) {
+      int chunk = stream->readBytes(imageBuffer + bytesRead, min(available, (size_t)(imageSize - bytesRead)));
+      bytesRead += chunk;
+
+      if (bytesRead % 51200 == 0) {  // Progress ogni 50KB
+        Serial.printf("Downloaded: %d / %d KB (%d%%)\n",
+                      bytesRead / 1024, imageSize / 1024,
+                      (bytesRead * 100) / imageSize);
+      }
+    }
+    delay(1);
+  }
+
+  http.end();
+  imageBufferSize = bytesRead;
+
+  Serial.printf("Image download complete: %d bytes\n", bytesRead);
+  return (bytesRead == imageSize);
+}
+
+/**
+ * Mostra immagine JPEG a schermo intero
+ */
+void displayImageFullscreen() {
+  if (imageBuffer == nullptr || imageBufferSize == 0) {
+    Serial.println("No image to display!");
+    return;
+  }
+
+  Serial.println("Displaying image fullscreen...");
+
+  M5.Display.wakeup();  // Sveglia display se in sleep
+  M5.Display.setColorDepth(8);  // 8-bit grayscale
+
+  // Mostra immagine JPEG da buffer
+  M5.Display.drawJpg(imageBuffer, imageBufferSize, 0, 0, 960, 540);
+  M5.Display.display();  // Full refresh
+  M5.Display.sleep();    // Spegni display
+
+  Serial.println("Image displayed successfully!");
+}
+
+/**
+ * Check e update immagine da GitHub
+ */
+void checkAndUpdateImage() {
+  Serial.println("=== IMAGE UPDATE CHECK ===");
+
+  // 1. Check batteria
+  if (!isBatteryOkForUpdate()) {
+    Serial.printf("Battery too low (%d%%), skipping image check\n", M5.Power.getBatteryLevel());
+    return;
+  }
+
+  // 2. Connetti WiFi
+  Serial.println("Connecting to WiFi for image check...");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - startAttempt < WIFI_CONNECT_TIMEOUT) {
+    delay(100);
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi connection failed, skipping image check");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+
+  Serial.println("WiFi connected!");
+
+  // 3. Scarica metadata
+  String remoteMD5 = downloadImageMetadata();
+
+  if (remoteMD5.length() == 0) {
+    Serial.println("Failed to get image metadata");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+
+  // 4. Confronta con MD5 salvato
+  prefs.begin("mmconfig", false);
+  String localMD5 = prefs.getString("imageMD5", "");
+  prefs.end();
+
+  Serial.printf("Local MD5: %s\n", localMD5.c_str());
+  Serial.printf("Remote MD5: %s\n", remoteMD5.c_str());
+
+  if (remoteMD5 == localMD5 && localMD5.length() > 0) {
+    Serial.println("Image already up to date!");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+
+  // 5. Nuova immagine! Scarica
+  Serial.println("New image found! Downloading...");
+
+  bool success = downloadImage();
+
+  if (!success) {
+    Serial.println("Image download failed!");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+
+  // 6. Spegni WiFi
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  // 7. Mostra nuova immagine
+  displayImageFullscreen();
+
+  // 8. Salva MD5
+  prefs.begin("mmconfig", false);
+  prefs.putString("imageMD5", remoteMD5);
+  prefs.end();
+
+  Serial.println("Image updated successfully!");
+}
+
+// ===== FIRMWARE UPDATE FUNCTIONS =====
 
 /**
  * Download firmware da URL e installa via OTA sulla flash
@@ -335,43 +558,82 @@ void smartRefresh() {
   displayDirty = false;
 }
 
-// ===== MAIN APPLICATION =====
+// ===== DEEP SLEEP =====
 
-void initializeApp() {
-  Serial.println("=== INITIALIZING MMPAPER ===");
+/**
+ * Calcola secondi fino al prossimo check immagine
+ */
+uint64_t getSecondsUntilNextImageCheck() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    // Se non riusciamo a ottenere l'ora, aspetta 1 ora
+    return 3600;
+  }
 
-  // Display splash screen
-  M5.Display.setColorDepth(8);  // 8-bit grayscale per antialiasing
-  M5.Display.fillScreen(TFT_WHITE);
+  int currentHour = timeinfo.tm_hour;
+  int currentMin = timeinfo.tm_min;
 
-  // Titolo
-  M5.Display.setFont(&fonts::FreeSansBold24pt7b);
-  M5.Display.setTextDatum(TC_DATUM);
-  M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.drawString("MMpaper", 480, 100);
+  // Orari di check
+  const int checkHours[] = IMAGE_CHECK_HOURS;
+  const int numCheckHours = sizeof(checkHours) / sizeof(checkHours[0]);
 
-  // Versione
-  M5.Display.setFont(&fonts::FreeSans18pt7b);
-  M5.Display.setTextDatum(MC_DATUM);
-  String versionText = "v" + String(FIRMWARE_VERSION);
-  M5.Display.drawString(versionText, 480, 270);
+  // Trova prossimo orario di check
+  int nextCheckHour = -1;
+  for (int i = 0; i < numCheckHours; i++) {
+    if (checkHours[i] > currentHour ||
+        (checkHours[i] == currentHour && currentMin < 5)) {
+      nextCheckHour = checkHours[i];
+      break;
+    }
+  }
 
-  // Footer
-  M5.Display.setFont(&fonts::FreeSans12pt7b);
-  M5.Display.setTextDatum(BC_DATUM);
-  M5.Display.setTextColor(0x888888);
-  M5.Display.drawString("Auto-updating e-ink app", 480, 500);
+  // Se non troviamo check oggi, prendi il primo di domani
+  if (nextCheckHour == -1) {
+    nextCheckHour = checkHours[0];
+    // Calcola secondi fino a domani alle nextCheckHour
+    int hoursUntilMidnight = 24 - currentHour;
+    int minutesUntilMidnight = 60 - currentMin;
+    uint64_t secondsUntilMidnight = (hoursUntilMidnight * 3600) + (minutesUntilMidnight * 60);
+    uint64_t secondsAfterMidnight = nextCheckHour * 3600;
+    return secondsUntilMidnight + secondsAfterMidnight;
+  }
 
-  M5.Display.display();  // Full refresh
-  M5.Display.sleep();     // Spegni display dopo splash screen
+  // Calcola secondi fino al prossimo check oggi
+  int hoursUntilCheck = nextCheckHour - currentHour;
+  int minutesUntilCheck = 0 - currentMin;  // Vogliamo arrivare a :00
+  uint64_t secondsUntilCheck = (hoursUntilCheck * 3600) + (minutesUntilCheck * 60);
 
-  Serial.println("MMpaper initialized!");
+  // Minimo 5 minuti di sleep
+  if (secondsUntilCheck < 300) {
+    secondsUntilCheck = 300;
+  }
+
+  Serial.printf("Next check in %llu seconds (~%llu minutes)\n",
+                secondsUntilCheck, secondsUntilCheck / 60);
+
+  return secondsUntilCheck;
 }
 
-void runApp() {
-  // TODO: Implementare logica app principale
-  // Per ora: mostra splash screen e aspetta
-  delay(100);
+/**
+ * Entra in deep sleep fino al prossimo check
+ */
+void enterDeepSleep() {
+  Serial.println("=== ENTERING DEEP SLEEP ===");
+
+  // Calcola tempo fino al prossimo check
+  uint64_t sleepSeconds = getSecondsUntilNextImageCheck();
+
+  Serial.printf("Sleeping for %llu seconds...\n", sleepSeconds);
+
+  // Prepara deep sleep
+  M5.Display.sleep();
+  WiFi.mode(WIFI_OFF);
+
+  // Configura wakeup timer
+  esp_sleep_enable_timer_wakeup(sleepSeconds * 1000000ULL);
+
+  // Vai in deep sleep
+  esp_deep_sleep_start();
 }
 
 // ===== ARDUINO SETUP & LOOP =====
@@ -386,40 +648,59 @@ void setup() {
 
   // Inizializza M5Unified
   auto cfg = M5.config();
-  cfg.internal_imu = ENABLE_IMU;  // Disabilita IMU per risparmio batteria
+  cfg.internal_imu = ENABLE_IMU;  // Disabilita IMU
   M5.begin(cfg);
 
   Serial.println("M5Unified initialized");
 
-  // AUTO-UPDATE: check prima di tutto!
-  if (shouldCheckUpdate()) {
-    Serial.println("Update check triggered, checking for updates...");
+  // 1. FIRMWARE UPDATE CHECK (solo al boot)
+  if (shouldCheckFirmwareUpdate()) {
+    Serial.println("Checking for firmware update...");
     checkGitHubAndUpdate();
-    isFirstBoot = false;  // Reset flag dopo primo check
-  } else {
-    Serial.println("Skipping update check (not scheduled time)");
+    // Se arriviamo qui, non c'era update (altrimenti restart)
+    isFirstBoot = false;
   }
 
-  // Inizializza app principale
-  initializeApp();
-}
+  // 2. IMAGE UPDATE CHECK (boot + schedulato)
+  if (shouldCheckImageUpdate()) {
+    Serial.println("Checking for image update...");
+    checkAndUpdateImage();
+    isFirstBoot = false;
+  }
 
-void loop() {
-  M5.update();  // Update button state
+  // 3. Se non abbiamo immagine, mostra l'immagine attuale salvata
+  if (imageBuffer == nullptr) {
+    Serial.println("No new image downloaded, attempting to show cached image");
+    // Prova a scaricare l'immagine corrente
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  // Controlla periodicamente se è l'ora di aggiornare (ogni minuto)
-  static unsigned long lastUpdateCheck = 0;
-  if (millis() - lastUpdateCheck > 60000) {  // Ogni 60 secondi
-    lastUpdateCheck = millis();
-    if (shouldCheckUpdate()) {
-      Serial.println("Scheduled update time reached");
-      checkGitHubAndUpdate();
+    unsigned long startAttempt = millis();
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - startAttempt < WIFI_CONNECT_TIMEOUT) {
+      delay(100);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      downloadImage();
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+
+      if (imageBuffer != nullptr) {
+        displayImageFullscreen();
+      }
     }
   }
 
-  // Run app logic
-  runApp();
+  // 4. Entra in deep sleep fino al prossimo check
+  Serial.println("Setup complete, entering deep sleep...");
+  delay(100);  // Dai tempo al serial di inviare
+  enterDeepSleep();
+}
 
-  // Smart refresh se necessario
-  smartRefresh();
+void loop() {
+  // Non dovremmo mai arrivare qui (deep sleep in setup)
+  // Ma se arriviamo qui, aspetta e riprova
+  delay(1000);
+  enterDeepSleep();
 }

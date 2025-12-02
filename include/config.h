@@ -2,15 +2,20 @@
 #define CONFIG_H
 
 // ===== FIRMWARE VERSION =====
-#define FIRMWARE_VERSION "0.3.0"
+#define FIRMWARE_VERSION "0.4.0"
 #define GITHUB_USER "marcelloemme"
 #define GITHUB_REPO "MMpaper"
 
 // ===== AUTO-UPDATE SETTINGS =====
-#define UPDATE_CHECK_HOUR 2     // Ora giornaliera per auto-update (2 = 2:00 AM)
-#define UPDATE_CHECK_MINUTE 0   // Minuto per auto-update
+// Firmware check: SOLO al boot (non più schedulato)
 #define MIN_BATTERY_PERCENT 30  // Non aggiornare se batteria < 30%
 #define WIFI_CONNECT_TIMEOUT 10000  // 10s timeout connessione WiFi
+
+// ===== IMAGE UPDATE SETTINGS =====
+// Check immagine: 6:00, 9:00, 12:00, 15:00, 18:00, 21:00, 00:00
+#define IMAGE_CHECK_HOURS {6, 9, 12, 15, 18, 21, 0}  // Orari check immagine
+#define IMAGE_CHECK_START_HOUR 6    // Inizio check giornalieri
+#define IMAGE_CHECK_END_HOUR 0      // Fine check (0 = mezzanotte)
 
 // ===== WIFI CREDENTIALS =====
 // NOTA: in produzione, salvare in SPIFFS/Preferences, non hardcoded!
