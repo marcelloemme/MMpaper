@@ -2,12 +2,12 @@
 #include <M5Unified.h>
 #include <Preferences.h>
 #include <WiFi.h>
-#include <esp32fota.h>
+#include <HTTPClient.h>
+#include <SD.h>
 #include "config.h"
 
 // ===== GLOBAL OBJECTS =====
 Preferences prefs;
-esp32FOTA FOTA("MMpaper", FIRMWARE_VERSION, false);
 
 // ===== DISPLAY REFRESH MANAGEMENT =====
 int partialRefreshCount = 0;
@@ -57,7 +57,64 @@ void displayMessage(const char* message, int y = 270) {
 }
 
 /**
- * Check GitHub e installa update se disponibile
+ * Download file da URL e salva su SD
+ * Returns: true se successo, false se fallito
+ */
+bool downloadFileToSD(const char* url, const char* filename) {
+  HTTPClient http;
+  http.begin(url);
+
+  Serial.printf("Downloading: %s\n", url);
+  int httpCode = http.GET();
+
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("HTTP error: %d\n", httpCode);
+    http.end();
+    return false;
+  }
+
+  // Apri file su SD per scrittura
+  File file = SD.open(filename, FILE_WRITE);
+  if (!file) {
+    Serial.println("Failed to open file on SD for writing");
+    http.end();
+    return false;
+  }
+
+  // Ottieni dimensione totale
+  int totalLength = http.getSize();
+  int currentLength = 0;
+
+  // Buffer per download
+  uint8_t buff[512] = { 0 };
+  WiFiClient* stream = http.getStreamPtr();
+
+  // Download con progress
+  while (http.connected() && (currentLength < totalLength || totalLength == -1)) {
+    size_t availableSize = stream->available();
+
+    if (availableSize) {
+      int bytesRead = stream->readBytes(buff, min(availableSize, sizeof(buff)));
+      file.write(buff, bytesRead);
+      currentLength += bytesRead;
+
+      // Progress ogni 100KB
+      if (currentLength % 102400 == 0) {
+        Serial.printf("Downloaded: %d KB / %d KB\n", currentLength / 1024, totalLength / 1024);
+      }
+    }
+    delay(1);
+  }
+
+  file.close();
+  http.end();
+
+  Serial.printf("Download complete! %d bytes written\n", currentLength);
+  return true;
+}
+
+/**
+ * Check GitHub e aggiorna .bin su microSD se disponibile
  */
 void checkGitHubAndUpdate() {
   Serial.println("=== AUTO-UPDATE CHECK ===");
@@ -68,10 +125,17 @@ void checkGitHubAndUpdate() {
     return;
   }
 
-  // 2. Mostra messaggio su display
+  // 2. Inizializza SD card
+  if (!SD.begin()) {
+    Serial.println("SD card not found, skipping update");
+    return;
+  }
+  Serial.println("SD card initialized");
+
+  // 3. Mostra messaggio su display
   displayMessage("Checking for updates...");
 
-  // 3. Connetti WiFi
+  // 4. Connetti WiFi
   Serial.println("Connecting to WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -88,42 +152,98 @@ void checkGitHubAndUpdate() {
     Serial.println("WiFi connection failed, skipping update");
     displayMessage("No WiFi - Starting app");
     delay(1000);
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
     return;
   }
 
   Serial.println("WiFi connected!");
 
-  // 4. Configura esp32FOTA - crea URL del manifest JSON
+  // 5. Download firmware.json da GitHub
+  HTTPClient http;
   String manifestURL = "https://raw.githubusercontent.com/" + String(GITHUB_USER) +
                        "/" + String(GITHUB_REPO) + "/main/firmware.json";
 
-  Serial.printf("Checking for updates at: %s\n", manifestURL.c_str());
+  Serial.printf("Checking version at: %s\n", manifestURL.c_str());
+  http.begin(manifestURL);
+  int httpCode = http.GET();
 
-  // 5. Check per update
-  bool updateAvailable = FOTA.execHTTPcheck();
-
-  if (updateAvailable) {
-    Serial.println("New version found! Installing...");
-
-    displayMessage("Update found!", 200);
-    displayMessage("Installing...", 300);
-
-    // 6. Download e installa
-    FOTA.execOTA();
-
-    // Se arriviamo qui, OTA è riuscito
-    displayMessage("Update successful!", 200);
-    displayMessage("Restarting...", 300);
-    delay(2000);
-    ESP.restart();  // Riavvia con nuova versione
-  } else {
-    Serial.println("No update available, version up to date");
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("Failed to get manifest: %d\n", httpCode);
+    http.end();
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return;
   }
 
-  // 7. Disconnect WiFi per risparmiare batteria
+  // 6. Parse JSON per ottenere versione remota
+  String payload = http.getString();
+  http.end();
+
+  // Parsing semplice del JSON (cerca "version")
+  int versionStart = payload.indexOf("\"version\":") + 11;
+  int versionEnd = payload.indexOf("\"", versionStart);
+  String remoteVersion = payload.substring(versionStart, versionEnd);
+
+  Serial.printf("Current version: %s\n", FIRMWARE_VERSION);
+  Serial.printf("Remote version: %s\n", remoteVersion.c_str());
+
+  // 7. Confronta versioni (confronto semplice stringhe)
+  if (remoteVersion == String(FIRMWARE_VERSION)) {
+    Serial.println("Already up to date!");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+
+  Serial.println("New version found! Downloading to SD...");
+  displayMessage("Update found!", 200);
+  displayMessage("Downloading...", 300);
+
+  // 8. Download nuovo firmware.bin su SD
+  String binURL = "https://raw.githubusercontent.com/" + String(GITHUB_USER) +
+                  "/" + String(GITHUB_REPO) + "/main/firmware.bin";
+
+  // Scarica in file temporaneo prima
+  const char* tempFile = "/MMpaper_new.bin";
+  const char* finalFile = "/MMpaper.bin";
+
+  bool downloadSuccess = downloadFileToSD(binURL.c_str(), tempFile);
+
+  if (!downloadSuccess) {
+    Serial.println("Download failed!");
+    displayMessage("Download failed!", 200);
+    displayMessage("Starting old version...", 300);
+    delay(2000);
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+
+  // 9. Sostituisci vecchio file con nuovo
+  displayMessage("Installing...", 270);
+
+  // Rimuovi vecchio file
+  if (SD.exists(finalFile)) {
+    SD.remove(finalFile);
+    Serial.println("Old firmware.bin removed");
+  }
+
+  // Rinomina nuovo file
+  SD.rename(tempFile, finalFile);
+  Serial.println("New firmware.bin installed on SD!");
+
+  // 10. Successo! Riavvia per far caricare da Launcher
+  displayMessage("Update successful!", 200);
+  displayMessage("Restarting...", 300);
+  displayMessage("Launcher will load new version", 400);
+  delay(3000);
+
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  Serial.println("WiFi disconnected");
+
+  Serial.println("Rebooting to Launcher...");
+  ESP.restart();  // Launcher ricaricherà MMpaper.bin aggiornato dalla SD!
 }
 
 // ===== DISPLAY REFRESH FUNCTIONS =====
