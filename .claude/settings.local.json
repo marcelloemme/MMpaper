@@ -21,7 +21,8 @@
       "Bash(md5 MMpaper.bin .pio/build/PaperS3/firmware.bin)",
       "Bash(chmod:*)",
       "Bash(./build_release.sh:*)",
-      "Bash(md5:*)"
+      "Bash(md5:*)",
+      "WebFetch(domain:platformio.org)"
     ],
     "deny": [],
     "ask": []

@@ -1,6 +1,6 @@
-# MMpaper - Auto-Updating E-Ink App for M5PaperS3
+# MMpaper - Auto-Updating E-Ink App for M5Paper/M5PaperS3
 
-Self-updating e-ink application for M5Stack PaperS3 with automatic GitHub releases integration.
+Self-updating e-ink application for M5Stack Paper devices with automatic GitHub releases integration.
 
 ## Features
 
@@ -9,10 +9,12 @@ Self-updating e-ink application for M5Stack PaperS3 with automatic GitHub releas
 - ✅ **E-ink optimized** - Smart refresh management (partial/full refresh)
 - ✅ **Graceful fallback** - Works offline if no WiFi available
 - ✅ **User feedback** - Update progress shown on e-ink display
+- ✅ **Multi-device support** - Works on both M5Paper (ESP32) and M5PaperS3 (ESP32-S3)
 
 ## Hardware Requirements
 
-- M5Stack PaperS3 (ESP32-S3, 4.7" e-ink display)
+- **M5Stack PaperS3** (ESP32-S3, 4.7" e-ink display) OR
+- **M5Stack Paper** (ESP32, 4.7" e-ink display)
 - microSD card (optional, for Launcher)
 - WiFi connection (for auto-updates)
 
@@ -32,25 +34,38 @@ Edit `include/config.h`:
 
 ### 2. Build & Upload
 
+Choose the environment based on your device:
+
+**For M5PaperS3 (ESP32-S3):**
 ```bash
 # Clone repository
 git clone https://github.com/YOUR_USER/MMpaper.git
 cd MMpaper
 
 # Build with PlatformIO
-pio run
+pio run -e PaperS3
 
 # Upload to device
-pio run --target upload
+pio run -e PaperS3 --target upload
+```
+
+**For M5Paper (ESP32 original):**
+```bash
+# Build with PlatformIO
+pio run -e Paper
+
+# Upload to device
+pio run -e Paper --target upload
 ```
 
 ### 3. Create GitHub Release
 
 After making changes:
 
+**For M5PaperS3:**
 ```bash
 # Build firmware
-pio run
+pio run -e PaperS3
 
 # Create GitHub release
 gh release create v0.1.0 \
@@ -59,10 +74,22 @@ gh release create v0.1.0 \
   --notes "First auto-updating version"
 ```
 
+**For M5Paper:**
+```bash
+# Build firmware
+pio run -e Paper
+
+# Create GitHub release with different binary name
+gh release create v0.1.0 \
+  .pio/build/Paper/firmware.bin \
+  --title "Initial Release" \
+  --notes "First auto-updating version"
+```
+
 Or via GitHub web UI:
 1. Go to Releases → New Release
 2. Tag: `v0.1.0` (use SemVer)
-3. Upload: `.pio/build/PaperS3/firmware.bin`
+3. Upload: `.pio/build/PaperS3/firmware.bin` (for S3) or `.pio/build/Paper/firmware.bin` (for original)
 4. Publish release
 
 ## How Auto-Update Works
