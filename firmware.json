@@ -1,7 +1,11 @@
 {
-  "type": "MMpaper",
   "version": "0.6.1",
-  "host": "raw.githubusercontent.com",
-  "port": 443,
-  "bin": "/marcelloemme/MMpaper/main/MMpaper.bin"
+  "url": "https://raw.githubusercontent.com/marcelloemme/MMpaper/main/MMpaper.bin",
+  "description": "MMpaper firmware with M5Paper (ESP32) support",
+  "changes": [
+    "Add M5Paper (ESP32) support",
+    "Multi-WiFi support with smart retry",
+    "Portrait mode with bottom bezel orientation",
+    "Smart crop for any image size"
+  ]
 }
